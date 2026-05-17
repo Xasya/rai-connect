@@ -9,6 +9,7 @@
 //! Requests are routed based on the host header and URL path:
 //!
 //! - **osu!direct requests** (search, download, thumbnails) -> `direct.rai.moe`
+//!   well, now it changes the chat messages `osu.localhost <-> osu.ppy.sh`
 //! - **All other requests** (login, scores, multiplayer) -> official `*.ppy.sh` servers
 //!
 //! This selective routing ensures that only beatmap-related traffic goes through
@@ -17,6 +18,7 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
@@ -26,8 +28,9 @@ use hyper::{body::Incoming, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use parking_lot::RwLock;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot};
 
+use crate::domain::domain_rewriter::DomainRewriter;
 use crate::domain::{
     inject_supporter_privileges, map_host_to_upstream, route_request, AppState, Packet,
     RouteDecision, ServerPacketId,
@@ -47,25 +50,6 @@ fn is_valid_localhost_host(host: &str) -> bool {
 }
 
 /// Runs the HTTPS proxy server with TLS.
-///
-/// Listens on the specified port and handles incoming HTTPS requests from the
-/// osu! client using a self-signed certificate. This is required because osu!
-/// with `-devserver localhost` still uses HTTPS.
-///
-/// # Arguments
-///
-/// * `port` - The local port to listen on (typically 443)
-/// * `direct_base_url` - Base URL for the rai.moe direct API
-/// * `inject_supporter` - If true, modifies Bancho responses to include supporter privileges
-/// * `upstream_server` - The upstream server domain (e.g., "ppy.sh" or "ripple.moe")
-/// * `state` - Shared application state for tracking statistics
-/// * `shutdown` - Receiver for graceful shutdown signal
-/// * `ready_tx` - Optional channel to signal when the server is ready
-///
-/// # Returns
-///
-/// Returns `Ok(())` when the server shuts down gracefully, or an error if
-/// binding fails or TLS setup fails.
 pub async fn run_https_proxy(
     port: u16,
     direct_base_url: &str,
@@ -105,17 +89,21 @@ pub async fn run_https_proxy(
 
     let direct_base_url = direct_base_url.to_string();
     let upstream_server = upstream_server.to_string();
+    let (connection_shutdown_tx, _) = broadcast::channel::<()>(1);
 
     // Create a shared HTTP client with connection pooling and timeouts
     let client = Arc::new(
         reqwest::Client::builder()
             .pool_max_idle_per_host(10)
-            .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(60))
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(120))
             .build()
             .unwrap_or_default(),
     );
+
+    let rewriter = Arc::new(DomainRewriter::new(&upstream_server));
 
     loop {
         tokio::select! {
@@ -127,6 +115,8 @@ pub async fn run_https_proxy(
                 let direct_base_url = direct_base_url.clone();
                 let upstream_server = upstream_server.clone();
                 let client = Arc::clone(&client);
+                let rewriter = Arc::clone(&rewriter);
+                let mut connection_shutdown_rx = connection_shutdown_tx.subscribe();
 
                 tokio::spawn(async move {
                     let tls_stream = match tls_acceptor.accept(stream).await {
@@ -140,19 +130,36 @@ pub async fn run_https_proxy(
                     let io = TokioIo::new(tls_stream);
 
                     let service = service_fn(move |req| {
-                        handle_request(req, direct_base_url.clone(), inject_supporter, upstream_server.clone(), Arc::clone(&state), Arc::clone(&client))
+                        handle_request(
+                            req,
+                            direct_base_url.clone(),
+                            inject_supporter,
+                            upstream_server.clone(),
+                            Arc::clone(&state),
+                            Arc::clone(&client),
+                            Arc::clone(&rewriter)
+                        )
                     });
 
-                    if let Err(err) = http1::Builder::new()
-                        .serve_connection(io, service)
-                        .await
-                    {
-                        tracing::debug!("Connection error from {}: {:?}", client_addr, err);
+                    let connection = http1::Builder::new()
+                        .keep_alive(false)
+                        .serve_connection(io, service);
+
+                    tokio::select! {
+                        result = connection => {
+                            if let Err(err) = result {
+                                tracing::debug!("Connection error from {}: {:?}", client_addr, err);
+                            }
+                        }
+                        _ = connection_shutdown_rx.recv() => {
+                            tracing::debug!("Closing active connection from {}", client_addr);
+                        }
                     }
                 });
             }
             _ = &mut shutdown => {
                 tracing::info!("HTTPS proxy shutting down");
+                let _ = connection_shutdown_tx.send(());
                 break;
             }
         }
@@ -162,24 +169,6 @@ pub async fn run_https_proxy(
 }
 
 /// Handles a single HTTP request from the osu! client.
-///
-/// Extracts the host and path from the request, determines the routing
-/// decision, updates statistics, and forwards the request to the appropriate
-/// upstream server.
-///
-/// # Arguments
-///
-/// * `req` - The incoming HTTP request
-/// * `direct_base_url` - Base URL for rai.moe direct API
-/// * `inject_supporter` - Whether to inject supporter privileges in Bancho responses
-/// * `upstream_server` - The upstream server domain (e.g., "ppy.sh" or "ripple.moe")
-/// * `state` - Shared application state for statistics
-/// * `client` - Shared HTTP client for upstream requests
-///
-/// # Returns
-///
-/// Always returns `Ok` with an HTTP response. Errors from upstream servers
-/// are converted to 502 Bad Gateway responses.
 async fn handle_request(
     req: Request<Incoming>,
     direct_base_url: String,
@@ -187,6 +176,7 @@ async fn handle_request(
     upstream_server: String,
     state: Arc<RwLock<AppState>>,
     client: Arc<reqwest::Client>,
+    rewriter: Arc<DomainRewriter>,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, Infallible> {
     let host = req
         .headers()
@@ -227,10 +217,18 @@ async fn handle_request(
                 let mut s = state.write();
                 s.beatmaps_downloaded += 1;
             }
-            forward_to_raimoe(req, &direct_base_url, &client).await
+            forward_to_raimoe(req, &direct_base_url, &client, &rewriter).await
         }
         RouteDecision::ForwardToUpstream => {
-            forward_to_upstream(req, &host, inject_supporter, &upstream_server, &client).await
+            forward_to_upstream(
+                req,
+                &host,
+                inject_supporter,
+                &upstream_server,
+                &client,
+                &rewriter,
+            )
+            .await
         }
         RouteDecision::RedirectToUpstream => {
             let upstream_host = map_host_to_upstream(&host, &upstream_server);
@@ -244,24 +242,11 @@ async fn handle_request(
 }
 
 /// Forwards a request to the rai.moe beatmap mirror.
-///
-/// Constructs the target URL by appending the request path to the direct
-/// base URL and forwards the request with all original headers (except
-/// hop-by-hop headers).
-///
-/// # Arguments
-///
-/// * `req` - The incoming HTTP request
-/// * `direct_base_url` - Base URL for rai.moe (e.g., `https://direct.rai.moe`)
-/// * `client` - HTTP client for making the upstream request
-///
-/// # Returns
-///
-/// The response from rai.moe, or a 502 Bad Gateway response on failure.
 async fn forward_to_raimoe(
     req: Request<Incoming>,
     direct_base_url: &str,
     client: &reqwest::Client,
+    rewriter: &DomainRewriter,
 ) -> Response<BoxBody<Bytes, Infallible>> {
     let path = req
         .uri()
@@ -272,7 +257,7 @@ async fn forward_to_raimoe(
 
     tracing::debug!("Forwarding to rai.moe: {}", url);
 
-    match forward_request(req, &url, client).await {
+    match forward_request(req, &url, client, rewriter).await {
         Ok(resp) => resp,
         Err(e) => {
             tracing::error!("Failed to forward to rai.moe: {}", e);
@@ -287,6 +272,7 @@ async fn forward_to_upstream(
     inject_supporter: bool,
     upstream_server: &str,
     client: &reqwest::Client,
+    rewriter: &DomainRewriter,
 ) -> Response<BoxBody<Bytes, Infallible>> {
     let upstream_host = map_host_to_upstream(host, upstream_server);
     let path = req
@@ -300,7 +286,9 @@ async fn forward_to_upstream(
 
     let is_bancho = upstream_host.starts_with("c.");
 
-    match forward_request_with_injection(req, &url, client, inject_supporter && is_bancho).await {
+    match forward_request_with_injection(req, &url, client, inject_supporter && is_bancho, rewriter)
+        .await
+    {
         Ok(resp) => resp,
         Err(e) => {
             tracing::error!("Failed to forward to {}: {}", upstream_server, e);
@@ -313,66 +301,46 @@ async fn forward_request(
     req: Request<Incoming>,
     url: &str,
     client: &reqwest::Client,
+    rewriter: &DomainRewriter,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, reqwest::Error> {
-    forward_request_with_injection(req, url, client, false).await
+    forward_request_with_injection(req, url, client, false, rewriter).await
 }
 
-/// Forwards an HTTP request to the specified URL, optionally injecting
-/// supporter privileges into Bancho response packets.
-///
-/// When `inject_supporter` is true, the response body is parsed as Bancho
-/// packets and any UserPrivileges packets are modified to include supporter
-/// status before being returned to the client.
-///
-/// # Arguments
-///
-/// * `req` - The incoming HTTP request
-/// * `url` - The full URL to forward to
-/// * `client` - HTTP client for making the request
-/// * `inject_supporter` - Whether to inject supporter privileges
-///
-/// # Returns
-///
-/// The upstream response (possibly modified), or a reqwest error.
 async fn forward_request_with_injection(
     req: Request<Incoming>,
     url: &str,
     client: &reqwest::Client,
     inject_supporter: bool,
+    rewriter: &DomainRewriter,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, reqwest::Error> {
     let method = match *req.method() {
-        Method::GET => reqwest::Method::GET,
         Method::POST => reqwest::Method::POST,
-        Method::PUT => reqwest::Method::PUT,
-        Method::DELETE => reqwest::Method::DELETE,
-        Method::HEAD => reqwest::Method::HEAD,
-        Method::OPTIONS => reqwest::Method::OPTIONS,
-        Method::PATCH => reqwest::Method::PATCH,
+        Method::GET => reqwest::Method::GET,
         _ => reqwest::Method::GET,
     };
 
     let mut builder = client.request(method, url);
 
     for (name, value) in req.headers() {
-        let name_str = name.as_str();
-        if !matches!(
-            name_str.to_lowercase().as_str(),
-            "host" | "connection" | "keep-alive" | "transfer-encoding" | "te" | "trailer"
-        ) {
-            if let Ok(v) = value.to_str() {
-                builder = builder.header(name_str, v);
-            }
+        let name_s = name.as_str().to_lowercase();
+        if !matches!(name_s.as_str(), "host" | "connection" | "content-length") {
+            builder = builder.header(name, value);
         }
     }
 
-    let body_bytes = req.collect().await.ok().map(|b| b.to_bytes());
-    if let Some(bytes) = body_bytes {
-        if !bytes.is_empty() {
-            builder = builder.body(bytes.to_vec());
-        }
-    }
+    let body_data = req
+        .collect()
+        .await
+        .ok()
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
+    let final_req_body = if !body_data.is_empty() {
+        rewriter.rewrite_forward(body_data)
+    } else {
+        body_data
+    };
 
-    let resp = builder.send().await?;
+    let resp = builder.body(final_req_body).send().await?;
 
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
     let mut response_builder = Response::builder().status(status);
@@ -403,15 +371,6 @@ async fn forward_request_with_injection(
 
 /// Parses Bancho packets from the response body and injects supporter
 /// privileges into any UserPrivileges packets.
-///
-/// This function:
-/// 1. Parses the binary response as a stream of Bancho packets
-/// 2. For each UserPrivileges packet (ID 71), modifies the privileges to
-///    include supporter status (bit 2)
-/// 3. Reassembles the packets into a new response body
-///
-/// If parsing fails or there are incomplete packets, they are preserved
-/// as-is to avoid breaking the client connection.
 fn inject_supporter_into_bancho_response(body: Bytes) -> Bytes {
     let (mut packets, remaining) = Packet::parse_stream(&body);
 
@@ -423,10 +382,24 @@ fn inject_supporter_into_bancho_response(body: Bytes) -> Bytes {
     let mut modified = false;
 
     for packet in &mut packets {
+        let packet_id = packet.header.packet_id;
+        let is_chat = matches!(packet_id, 0 | 7);
+        let mut packet_modified = false;
+
         if packet.packet_type() == ServerPacketId::UserPrivileges {
             tracing::debug!("Injecting supporter privileges into UserPrivileges packet");
             inject_supporter_privileges(packet);
+            packet_modified = true;
+        }
+
+        if packet_modified {
             modified = true;
+        } else if is_chat {
+            tracing::info!(
+                "Processing incoming chat packet (ID: {}), payload size: {}",
+                packet_id,
+                packet.payload.len()
+            );
         }
     }
 

@@ -1,10 +1,17 @@
+# What changed?
+
+- Added support for changing private server in GUI
+- Beatmaps sent via `/np` now send to the server correct domain `osu.localhost -> osu.ppy.sh`
+###### The only thing that annoyed me was that when I sent a map to a friend, they couldn't open it, naturally because they were receiving `osu.localhost/b/123`. And if I wanted to download a map my friend sent me, the game ALWAYS opened the browser for me. (now the browser only opens if the map isn't on a mirror)
+
+
 # rai!connect
 
-[![GitHub release](https://img.shields.io/github/v/release/rai-osu/connect?style=flat-square&logo=github)](https://github.com/rai-osu/connect/releases)
+<!-- [![GitHub release](https://img.shields.io/github/v/release/rai-osu/connect?style=flat-square&logo=github)](https://github.com/rai-osu/connect/releases)
 [![Downloads](https://img.shields.io/github/downloads/rai-osu/connect/total?style=flat-square&logo=github)](https://github.com/rai-osu/connect/releases)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)
 [![License](https://img.shields.io/github/license/rai-osu/connect?style=flat-square)](LICENSE)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/checksum)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/checksum) -->
 
 Desktop client for [rai.moe](https://rai.moe) beatmap mirror. Download beatmaps in-game with osu!direct, no supporter tag required.
 
@@ -16,7 +23,7 @@ Desktop client for [rai.moe](https://rai.moe) beatmap mirror. Download beatmaps 
 | macOS    | `.dmg` (Intel and Apple Silicon)      |
 | Linux    | `.AppImage`, `.deb`, or `.rpm`        |
 
-Download from [GitHub Releases](https://github.com/rai-osu/connect/releases).
+Download from [GitHub Releases (Modded)](https://github.com/Xasya/rai-connect/releases) / [Official](https://github.com/rai-osu/connect/releases)
 
 ## Usage
 
@@ -37,20 +44,22 @@ sequenceDiagram
     participant mirror as direct.rai.moe
     participant bancho as Bancho
 
-    osu->>proxy: GET /d/123456 (beatmap)
+    osu->>proxy: beatmap \ direct search
     proxy->>mirror: forward
-    mirror-->>proxy: .osz file
-    proxy-->>osu: .osz file
+    mirror-->>proxy: beatmap \ data
 
-    osu->>proxy: osu!direct search
-    proxy->>mirror: forward
-    mirror-->>proxy: beatmap listing
-    proxy-->>osu: beatmap listing
+    proxy-->>osu: beatmap \ direct search
 
-    osu->>proxy: POST c.ppy.sh (login)
+    osu->>proxy: POST *.localhost (login \ chat)
+    proxy->>proxy: rewrite_forward: *.localhost -> *.ppy.sh
     proxy->>bancho: forward
-    bancho-->>proxy: UserPrivileges packet
+
+    bancho-->>proxy: UserPrivileges packet \ Chat meessage
+
     proxy->>proxy: inject SUPPORTER flag
+
+    proxy->>proxy: rewrite_backward: *.ppy.sh -> *.localhost
+
     proxy-->>osu: modified packet
 ```
 
@@ -97,6 +106,15 @@ Hosts entries added:
 127.0.0.1 i.localhost
 ```
 
+### Settings \ certificate file path?
+
+```
+%APPDATA%\moe.rai.connect\settings.json
+```
+```
+%LOCALAPPDATA%\rai-connect\localhost.cer
+```
+
 ### Credentials
 
 **Why do I get logged out when switching between rai and normal osu!?**
@@ -133,15 +151,15 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-## Star History
+<!-- ## Star History -->
 
-<a href="https://www.star-history.com/#rai-osu/connect&type=date&legend=bottom-right">
+<!-- <a href="https://www.star-history.com/#rai-osu/connect&type=date&legend=bottom-right">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=rai-osu/connect&type=date&theme=dark&legend=bottom-right" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=rai-osu/connect&type=date&legend=bottom-right" />
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=rai-osu/connect&type=date&legend=bottom-right" />
  </picture>
-</a>
+</a> -->
 
 ## License
 

@@ -28,6 +28,8 @@
   let showSettings = $state(false);
   let showLogs = $state(false);
   let showOnboarding = $state(false);
+  
+  const version = __APP_VERSION__
 
   const connected = $derived(isConnected());
   const connecting = $derived(isConnecting());
@@ -70,16 +72,19 @@
   }
 </script>
 
-<main class="min-h-screen bg-background p-6 flex flex-col font-sans">
-  <header class="flex items-center justify-between mb-8">
-    <div class="flex items-center gap-3">
-      <img src="/favicon.png" alt="rai!connect" class="w-10 h-10" />
-      <div>
-        <h1 class="text-xl font-bold text-foreground">rai!connect</h1>
+<main class="min-h-screen bg-background p-4 sm:p-6 flex flex-col font-sans overflow-x-hidden transition-all duration-150">
+  <header class="flex items-center justify-between gap-3 mb-8 min-w-0">
+    <div class="flex items-center gap-3 min-w-0">
+      <img src="/favicon.png" alt="rai!connect" class="w-10 h-10 shrink-0" />
+      <div class="min-w-0">
+        <div class="flex gap-2 items-center">
+          <h1 class="text-xl font-bold text-foreground">rai!connect</h1>
+          <span class="text-foreground/70 text-xs font-mono -tracking-wider">v{version}</span>
+        </div>
         <p class="text-xs text-muted-foreground">osu!direct mirror proxy</p>
       </div>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex shrink-0 items-center gap-2">
       {#if store.config.debug_logging}
         <Tooltip text="View debug logs and proxy activity" position="bottom">
           {#snippet children()}
@@ -118,18 +123,18 @@
   <UpdateNotification />
 
   {#if showSettings}
-    <div class="mb-8 p-6 bg-card rounded-xl border border-border">
+    <div class="mb-8 p-4 sm:p-6 bg-card rounded-xl border border-border min-w-0 overflow-hidden">
       <h2 class="text-lg font-semibold text-foreground mb-4">Settings</h2>
       <Settings />
     </div>
   {:else if showLogs}
-    <div class="flex-1 mb-8 p-6 bg-card rounded-xl border border-border flex flex-col min-h-[400px]">
+    <div class="flex-1 mb-8 p-4 sm:p-6 bg-card rounded-xl border border-border flex flex-col min-h-100 min-w-0 overflow-hidden">
       <LogViewer />
     </div>
   {:else}
     <div class="flex-1 flex flex-col">
-      <div class="mb-8 p-6 bg-card rounded-xl border border-border">
-        <div class="flex items-center justify-between mb-4">
+      <div class="mb-8 p-4 sm:p-6 bg-card rounded-xl border border-border min-w-0 transition-all duration-75">
+        <div class="flex items-center justify-between gap-3 mb-4">
           <StatusIndicator status={store.appState.status} />
           {#if store.appState.osu_running}
             <span class="text-xs text-success flex items-center gap-1 font-medium">
@@ -153,7 +158,7 @@
           </div>
         {/if}
 
-        <div class="flex gap-3">
+        <div class="flex flex-wrap gap-3">
           {#if connected}
             <Tooltip text="Stop the proxy server and restore hosts file" position="top">
               {#snippet children()}
@@ -210,7 +215,7 @@
       </div>
 
       {#if connected}
-        <div class="grid grid-cols-2 gap-4 mb-8">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
           <StatsCard
             label="Requests Proxied"
             value={store.appState.requests_proxied}
@@ -226,7 +231,7 @@
     </div>
   {/if}
 
-  <footer class="mt-6 text-center">
+  <footer class="mt-6 text-center flex items-center justify-center gap-1">
     <a
       href="https://rai.moe"
       target="_blank"
@@ -234,6 +239,15 @@
       class="text-xs text-muted-foreground hover:text-primary transition-colors"
     >
       rai.moe
+    </a>
+    <span class="text-muted-foreground text-xs">|</span>
+    <a
+      href="https://github.com/Xasya/rai-connect"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="text-xs text-muted-foreground hover:text-primary transition-colors"
+    >
+    modded
     </a>
   </footer>
 </main>

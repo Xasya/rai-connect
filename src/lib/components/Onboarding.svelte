@@ -100,7 +100,7 @@
     </div>
 
     <!-- Step content -->
-    <div class="min-h-[280px] flex flex-col">
+    <div class="min-h-70 flex flex-col">
       {#if currentStep === 0}
         <!-- Step 1: Welcome -->
         <div class="text-center flex-1 flex flex-col justify-center">

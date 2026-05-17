@@ -90,7 +90,10 @@ mod deelevate {
             let mut cmd_wide = to_wide(&cmd_line);
             let working_dir_wide = to_wide(&working_dir.to_string_lossy());
 
-            let mut startup_info = STARTUPINFOW::default();
+            let mut startup_info = STARTUPINFOW {
+                cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+                ..Default::default()
+            };
             startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
             let mut process_info = PROCESS_INFORMATION::default();
 

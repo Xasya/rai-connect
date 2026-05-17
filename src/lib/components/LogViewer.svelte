@@ -76,16 +76,16 @@
   }
 </script>
 
-<div class="flex flex-col h-full">
+<div class="flex min-w-0 flex-col h-full">
   <!-- Header -->
-  <div class="flex items-center justify-between mb-3">
-    <div class="flex items-center gap-3">
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+    <div class="flex min-w-0 items-center gap-3">
       <h3 class="text-sm font-medium text-foreground">Debug Logs</h3>
       <span class="text-xs text-muted-foreground">
         {store.logs.length} entries
       </span>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <label class="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
         <Checkbox bind:checked={autoRefresh} size="sm" />
         Auto-refresh
@@ -105,20 +105,20 @@
 
   <!-- Log entries -->
   <div
-    class="flex-1 overflow-auto bg-background border border-border rounded-lg p-3 font-mono text-xs selectable"
+    class="min-w-0 flex-1 overflow-auto bg-background border border-border rounded-lg p-3 font-mono text-xs selectable"
   >
     {#if store.logs.length === 0}
       <div class="text-muted-foreground text-center py-8">
         No log entries yet. Logs will appear here when the proxy is active.
       </div>
     {:else}
-      <div class="space-y-1">
+      <div class="min-w-max space-y-1">
         {#each store.logs as log (log.id)}
-          <div class="flex gap-2 hover:bg-white/5 px-1 rounded transition-colors">
-            <span class="text-muted-foreground shrink-0">{log.timestamp}</span>
+          <div class="grid grid-cols-[5.75rem_3rem_16rem_minmax(28rem,1fr)] gap-2 hover:bg-white/5 px-1 rounded transition-colors">
+            <span class="text-muted-foreground whitespace-nowrap">{log.timestamp}</span>
             <span class={`shrink-0 w-12 font-bold ${getLevelColor(log.level)}`}>{log.level}</span>
-            <span class="text-primary shrink-0">{formatTarget(log.target)}</span>
-            <span class="text-foreground break-all">{log.message}</span>
+            <span class="text-primary whitespace-nowrap overflow-hidden text-ellipsis">{formatTarget(log.target)}</span>
+            <span class="text-foreground whitespace-pre-wrap wrap-break-word">{log.message}</span>
           </div>
         {/each}
       </div>

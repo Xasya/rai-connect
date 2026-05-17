@@ -9,6 +9,7 @@ export interface ProxyConfig {
   inject_supporter: boolean;
   api_base_url: string;
   direct_base_url: string;
+  upstream_server: string;
 }
 
 export interface AppConfig {
@@ -47,6 +48,7 @@ export const defaultConfig: AppConfig = {
     inject_supporter: false,
     api_base_url: "https://api.rai.moe",
     direct_base_url: "https://direct.rai.moe",
+    upstream_server: "ppy.sh",
   },
 };
 

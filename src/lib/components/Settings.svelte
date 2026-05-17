@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { store, updateConfig, detectOsuPath, validateOsuPath, isConnected, createDesktopShortcut, checkShortcutExists, removeDesktopShortcut } from "$lib/stores/app.svelte";
+  import { store, updateConfig, detectOsuPath, validateOsuPath, isConnected, createDesktopShortcut, checkShortcutExists, removeDesktopShortcut, disconnect, startProxy } from "$lib/stores/app.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { Info, ExternalLink, Trash2 } from "lucide-svelte";
   import Button from "./Button.svelte";
@@ -11,9 +11,36 @@
   let pathInput = $state(store.config.osu_path ?? "");
   let shortcutExists = $state<boolean | null>(null);
   let isShortcutLoading = $state(false);
+  let isServerRestarting = $state(false);
+
+  const serverOptions = [
+    { label: "Bancho", value: "ppy.sh" },
+    { label: "gatari.pw", value: "gatari.pw" },
+    { label: "ripple.moe", value: "ripple.moe" },
+    { label: "akatsuki.gg", value: "akatsuki.gg" },
+  ];
+
+  const currentUpstream = store.config.proxy.upstream_server || "ppy.sh";
+  const isKnownServer = serverOptions.some(o => o.value === currentUpstream);
+
+  let serverSelectValue = $state(isKnownServer ? currentUpstream : "custom");
+  let customServerInput = $state(currentUpstream);
+  let showSupporterConfirm = $state(false);
+
+
+  $effect(() => {
+    const upstream = store.config.proxy.upstream_server || "ppy.sh";
+    const known = serverOptions.some(o => o.value === upstream);
+    
+    if (known) {
+      serverSelectValue = upstream;
+    } else {
+      serverSelectValue = "custom";
+      customServerInput = upstream;
+    }
+  });
 
   onMount(() => {
-    // Check shortcut status immediately on mount
     refreshShortcutStatus();
   });
 
@@ -29,9 +56,7 @@
         shortcutExists = false;
       } else {
         const result = await createDesktopShortcut();
-        if (result) {
-          shortcutExists = true;
-        }
+        if (result) shortcutExists = true;
       }
     } finally {
       isShortcutLoading = false;
@@ -63,11 +88,65 @@
     await updateConfig(key, !store.config[key]);
   }
 
-  let showSupporterConfirm = $state(false);
+  function normalizeServer(server: string): string {
+    return server
+      .trim()
+      .replace(/^https?:\/\//i, "")
+      .replace(/\/.*$/, "")
+      .toLowerCase();
+  }
+
+  async function updateProxyConfig(nextProxy: typeof store.config.proxy, restartIfConnected = false) {
+    const shouldRestart = restartIfConnected && isConnected();
+    try {
+      if (shouldRestart) {
+        isServerRestarting = true;
+        await disconnect();
+      }
+
+      await updateConfig("proxy", nextProxy);
+
+      if (shouldRestart) {
+        await startProxy();
+      }
+    } finally {
+      isServerRestarting = false;
+    }
+  }
+
+  async function handleServerSelect(event: Event) {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    serverSelectValue = value;
+
+    if (value === "custom") {
+      customServerInput = serverOptions.some((o) => o.value === store.config.proxy.upstream_server)
+        ? ""
+        : store.config.proxy.upstream_server;
+      return;
+    }
+
+    customServerInput = value;
+    await updateProxyConfig({ ...store.config.proxy, upstream_server: value }, true);
+  }
+
+  async function handleCustomServerChange() {
+    const upstream = normalizeServer(customServerInput);
+    customServerInput = upstream;
+
+    if (!upstream || upstream === store.config.proxy.upstream_server) return;
+    await updateProxyConfig({ ...store.config.proxy, upstream_server: upstream }, true);
+  }
+
+  async function handleSupporterCheckboxChange() {
+    if (store.config.proxy.inject_supporter) {
+      await updateProxyConfig({ ...store.config.proxy, inject_supporter: false });
+    } else {
+      showSupporterConfirm = true;
+    }
+  }
 
   async function confirmSupporter() {
-    const newProxy = { ...store.config.proxy, inject_supporter: true };
-    await updateConfig("proxy", newProxy);
+    await updateProxyConfig({ ...store.config.proxy, inject_supporter: true });
     showSupporterConfirm = false;
   }
 
@@ -115,21 +194,19 @@
         {/snippet}
       </Tooltip>
     </div>
-    <div class="flex gap-2">
+    <div class="flex flex-wrap gap-2">
       <input
         id="osu-path"
         type="text"
         bind:value={pathInput}
         onblur={handlePathChange}
         placeholder="C:\osu!"
-        class="flex-1 px-3 py-2 bg-input border border-input rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring transition-all"
+        class="min-w-0 flex-1 basis-48 px-3 py-2 bg-input border border-input rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring transition-all"
       />
       <Tooltip text="Automatically find your osu! installation" position="top">
         {#snippet children()}
           <Button variant="outline" onclick={handleDetect} loading={isDetecting}>
-            {#snippet children()}
-              Detect
-            {/snippet}
+            {#snippet children()}Detect{/snippet}
           </Button>
         {/snippet}
       </Tooltip>
@@ -149,7 +226,7 @@
         checked={store.config.start_at_boot}
         onchange={() => handleToggle("start_at_boot")}
       />
-      <div class="flex flex-col">
+      <div class="flex min-w-0 flex-col">
         <span class="text-sm text-foreground group-hover:text-primary transition-colors">
           Start at system boot
         </span>
@@ -164,7 +241,7 @@
         checked={store.config.minimize_to_tray}
         onchange={() => handleToggle("minimize_to_tray")}
       />
-      <div class="flex flex-col">
+      <div class="flex min-w-0 flex-col">
         <span class="text-sm text-foreground group-hover:text-primary transition-colors">
           Minimize to tray on close
         </span>
@@ -179,7 +256,7 @@
         checked={store.config.start_minimized}
         onchange={() => handleToggle("start_minimized")}
       />
-      <div class="flex flex-col">
+      <div class="flex min-w-0 flex-col">
         <span class="text-sm text-foreground group-hover:text-primary transition-colors">
           Start minimized
         </span>
@@ -194,7 +271,7 @@
         checked={store.config.debug_logging}
         onchange={() => handleToggle("debug_logging")}
       />
-      <div class="flex flex-col">
+      <div class="flex min-w-0 flex-col">
         <span class="text-sm text-foreground group-hover:text-primary transition-colors">
           Show debug logs
         </span>
@@ -205,8 +282,8 @@
     </label>
 
     <div class="pt-4 border-t border-border">
-      <div class="flex items-center justify-between">
-        <div class="flex flex-col">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex min-w-0 flex-col">
           <div class="flex items-center gap-2">
             <span class="text-sm font-medium text-foreground">
               Desktop Shortcut
@@ -250,21 +327,10 @@
       <label class="flex items-start gap-3 cursor-pointer group">
         <Checkbox
           checked={store.config.proxy.inject_supporter}
-          onclick={(e) => {
-            if (!store.config.proxy.inject_supporter) {
-              e.preventDefault();
-              showSupporterConfirm = true;
-            }
-          }}
-          onchange={() => {
-            if (store.config.proxy.inject_supporter) {
-              const newProxy = { ...store.config.proxy, inject_supporter: false };
-              updateConfig("proxy", newProxy);
-            }
-          }}
+          onchange={handleSupporterCheckboxChange}
           class="mt-0.5"
         />
-        <div class="flex flex-col flex-1">
+        <div class="flex min-w-0 flex-1 flex-col">
           <div class="flex items-center gap-2">
             <span class="text-sm text-foreground group-hover:text-primary transition-colors">
               Inject Supporter Tag
@@ -282,13 +348,76 @@
       </label>
     </div>
 
-    {#if isConnected()}
+    <div class="pt-4 border-t border-border space-y-2">
+      <div class="flex items-center gap-2">
+        <label for="server-select" class="block text-sm font-medium text-foreground">
+          Server
+        </label>
+        <Tooltip text="Select where Bancho traffic is forwarded. Beatmap downloads still use rai.moe, and osu! updates stay on official servers." position="right">
+          {#snippet children()}
+            <Info class="w-4 h-4 text-muted-foreground cursor-help hover:text-foreground transition-colors" />
+          {/snippet}
+        </Tooltip>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <select
+          id="server-select"
+          value={serverSelectValue}
+          onchange={handleServerSelect}
+          disabled={isServerRestarting}
+          class="min-w-0 w-full sm:w-48 px-3 py-2 bg-input border border-input rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-ring transition-all"
+        >
+          {#each serverOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+          <option value="custom">Custom...</option>
+        </select>
+
+        {#if serverSelectValue === "custom"}
+          <input
+            id="custom-server"
+            type="text"
+            bind:value={customServerInput}
+            onblur={handleCustomServerChange}
+            onkeydown={(event) => {
+              if (event.key === "Enter") {
+                (event.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            disabled={isServerRestarting}
+            placeholder="ppy.sh"
+            class="min-w-0 flex-1 basis-48 px-3 py-2 bg-input border border-input rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring transition-all"
+          />
+          <Button
+            variant="outline"
+            class="shrink-0 h-full"
+            onclick={handleCustomServerChange}
+            disabled={isServerRestarting}
+          >
+            {#snippet children()}Save{/snippet}
+          </Button>
+        {/if}
+      </div>
+
+      <p class="text-xs text-muted-foreground">
+        {#if isServerRestarting}
+          Restarting proxy with {store.config.proxy.upstream_server}...
+        {:else if store.config.proxy.upstream_server === "ppy.sh"}
+          Traffic uses the official osu! servers.
+        {:else}
+          Traffic forwards to {store.config.proxy.upstream_server}.
+        {/if}
+      </p>
+    </div>
+
+    <!-- {#if isConnected()}
       <div class="p-3 bg-warning/10 border border-warning/20 rounded-lg flex items-center gap-2">
         <Info class="w-4 h-4 text-warning" />
         <p class="text-xs text-warning">
           Reconnect for changes to take effect.
         </p>
       </div>
-    {/if}
+    {/if} -->
   </div>
 </div>
