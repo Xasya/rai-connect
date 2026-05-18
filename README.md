@@ -2,8 +2,7 @@
 
 - Added support for changing private server in GUI
 - Beatmaps sent via `/np` now send to the server correct domain `osu.localhost -> osu.ppy.sh`
-###### The only thing that annoyed me was that when I sent a map to a friend, they couldn't open it, naturally because they were receiving `osu.localhost/b/123`. And if I wanted to download a map my friend sent me, the game ALWAYS opened the browser for me. (now the browser only opens if the map isn't on a mirror)
-
+###### The only thing that annoyed me was that when I sent a map to a friend, they couldn't open it, naturally because they were receiving `osu.localhost/b/123`. And if I wanted to download a map my friend sent me, the game ALWAYS opened the browser for me.
 
 # rai!connect
 
