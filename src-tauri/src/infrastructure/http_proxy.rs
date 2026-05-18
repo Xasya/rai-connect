@@ -364,6 +364,10 @@ async fn forward_request_with_injection(
         body_bytes = inject_supporter_into_bancho_response(body_bytes);
     }
 
+    if !body_bytes.is_empty() {
+        body_bytes = rewriter.rewrite_backward(body_bytes);
+    }
+
     let body = Full::new(body_bytes).map_err(|_| unreachable!()).boxed();
 
     Ok(response_builder.body(body).unwrap())
